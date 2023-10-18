@@ -1,0 +1,16 @@
+#!/usr/bin/bash
+
+API_URL="https://api.example.com/ip-monitor"
+# careful with the secret and the \, as it's an escape char
+API_SECRET='<SUPER-SECRET>'
+# this is just an identifier
+DOMAIN="<DOMAIN-ID>"
+
+DISCORD_USERNAME="IP Monitor"
+DISCORD_WEBHOOK="https://discord.com/api/webhooks/<WEBHOOK.ID>/<WEBHOOK.TOKEN>"
+
+VULTR_RECORD_ID="<RECORD-ID>"
+VULTR_API_URL="https://api.vultr.com/v2/domains/${DOMAIN}/records/${VULTR_RECORD_ID}"
+VULTR_API_KEY="<API-KEY>"
+
+SPEEDTEST_SERVER_ID="<SERVER-ID>"

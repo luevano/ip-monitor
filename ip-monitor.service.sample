@@ -1,0 +1,14 @@
+[Unit]
+Description=IP Monitor
+After=network.target
+
+[Service]
+User=<YOUR-USERNAME>
+WorkingDirectory=/path/to/ip-monitor/root/dir
+LimitNOFILE=4096
+ExecStart=/usr/bin/bash /path/to/ip-monitor/root/dir/ip_monitor.sh
+Restart=on-failure
+RestartSec=5s
+
+[Install]
+WantedBy=multi-user.target
