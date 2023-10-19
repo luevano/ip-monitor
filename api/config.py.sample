@@ -1,0 +1,2 @@
+SERVERS_PATH = "/path/to/db/file/servers.json"
+ROOT_PATH = "ip-monitor"

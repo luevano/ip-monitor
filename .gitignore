@@ -164,3 +164,7 @@ config.sh
 ip-monitor.service
 ip-monitor.timer
 *.log
+config.py
+ip-monitor-api.service
+log.ini
+servers.json

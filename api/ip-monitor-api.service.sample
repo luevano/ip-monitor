@@ -1,0 +1,14 @@
+[Unit]
+Description=IP Monitor API
+After=network.target
+
+[Service]
+User=david
+WorkingDirectory=/path/to/ip-monitor/root/dir/api
+LimitNOFILE=4096
+ExecStart=/usr/bin/uvicorn ip-monitor-api:app --app-dir /path/to/ip-monitor/root/dir/api --port <PORT>
+Restart=on-failure
+RestartSec=5s
+
+[Install]
+WantedBy=multi-user.target
