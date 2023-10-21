@@ -1,6 +1,6 @@
 import logging
 import json
-from fastapi import FastAPI, Request, Response, status
+from fastapi import FastAPI, Request, status
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -13,8 +13,12 @@ log = logging.getLogger(__name__)
 
 
 servers = {}
-with open(SERVERS_PATH, "r") as json_file:
-    servers = json.load(json_file)
+try:
+    with open(SERVERS_PATH, "r") as json_file:
+        servers = json.load(json_file)
+except FileNotFoundError:
+    with open(SERVERS_PATH, "x") as json_file:
+        json_file.write(json.dumps(servers, indent=4))
 
 
 def save_servers_info():
@@ -40,8 +44,11 @@ class Credentials(BaseModel):
 async def get_ip(request: Request):
     ip = request.client.host
     ipv4 = is_ipv4(ip)
+    status_code = status.HTTP_200_OK
+    out = {"ip": ip, "ipv4": ipv4, "status_code": status_code}
 
-    return {"ip": ip}
+    return JSONResponse(content=jsonable_encoder(out),
+                        status_code=status_code)
 
 
 @app.put("/ip")
@@ -51,28 +58,42 @@ async def update_ips(credentials: Credentials, request: Request):
     ssecret = credentials.secret
 
     ipv4 = is_ipv4(ip)
+    if not ipv4:
+        msg = "Only IPv4 supported."
+        status_code = status.HTTP_406_NOT_ACCEPTABLE
+        out = {"error": msg, "status_code": status_code}
+        return JSONResponse(content=jsonable_encoder(out),
+                            status_code=status_code)
 
     if sname not in servers:
         servers[sname] = {"ip": ip, "secret": ssecret}
         save_servers_info()
-        return JSONResponse(content=jsonable_encoder(servers[sname]),
-                            status_code=status.HTTP_201_CREATED)
+        status_code = status.HTTP_201_CREATED
+        out = {"name": sname, "secret": ssecret, "ip": ip, "status_code": status_code}
+        return JSONResponse(content=jsonable_encoder(out),
+                            status_code=status_code)
 
     if ssecret != servers[sname]["secret"]:
-        return Response(content=f"401",
-                        media_type="text/plain",
-                        status_code=status.HTTP_401_UNAUTHORIZED)
+        msg = "Wrong secret."
+        status_code = status.HTTP_401_UNAUTHORIZED
+        out = {"msg": msg, "status_code": status_code}
+        return JSONResponse(content=jsonable_encoder(out),
+                            status_code=status_code)
 
     if servers[sname]["ip"] != ip:
         old_ip = servers[sname]["ip"]
         servers[sname]["ip"] = ip
         servers[sname]["ip_history"].insert(0, ip)
         save_servers_info()
-        return Response(content=f"201: {sname} IP changed:{old_ip}-{ip}",
-                        media_type="text/plain",
-                        status_code=status.HTTP_201_CREATED)
 
-    return Response(content=f"200: {sname} IP hasn't changed",
-                    media_type="text/plain",
-                    status_code=status.HTTP_200_OK)
+        status_code = status.HTTP_201_CREATED
+        out = {"name": sname, "ip": ip, "old_ip": old_ip, "status_code": status_code}
+        return JSONResponse(content=jsonable_encoder(out),
+                            status_code=status_code)
+
+    msg = "IP hasn't changed."
+    status_code = status.HTTP_200_OK
+    out = {"name": sname, "msg": msg, "ip": ip, "status_code": status_code}
+    return JSONResponse(content=jsonable_encoder(out),
+                        status_code=status_code)
 
