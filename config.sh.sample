@@ -1,4 +1,5 @@
 #!/usr/bin/bash
+# Config for ip-monitor. It holds secrets: keep it readable by root only.
 
 API_URL="https://api.example.com/ip-monitor"
 # careful with the secret and the \, as it's an escape char
@@ -6,11 +7,27 @@ API_SECRET='<SUPER-SECRET>'
 # this is just an identifier
 DOMAIN="<DOMAIN-ID>"
 
+# leave the webhook empty to turn Discord notifications off
 DISCORD_USERNAME="IP Monitor"
 DISCORD_WEBHOOK="https://discord.com/api/webhooks/<WEBHOOK.ID>/<WEBHOOK.TOKEN>"
 
+VULTR_API_KEY="<API-KEY>"
+# A record
 VULTR_RECORD_ID="<RECORD-ID>"
 VULTR_API_URL="https://api.vultr.com/v2/domains/${DOMAIN}/records/${VULTR_RECORD_ID}"
-VULTR_API_KEY="<API-KEY>"
+# AAAA record; leave the ID empty to not update DNS for IPv6
+VULTR_RECORD_ID_AAAA=""
+VULTR_API_URL_AAAA="https://api.vultr.com/v2/domains/${DOMAIN}/records/${VULTR_RECORD_ID_AAAA}"
 
+# leave empty to skip the speedtest (it also needs speedtest-go installed)
 SPEEDTEST_SERVER_ID="<SERVER-ID>"
+
+# IPv6 (all optional, these are the defaults)
+# 0 turns the whole IPv6 part off
+#IPV6_ENABLED=1
+# interface to look at; empty means the one with the IPv6 default route
+#IPV6_INTERFACE=""
+# 0 keeps addresses that stopped working (left over from an old ISP prefix)
+#IPV6_REMOVE_STALE=1
+# URL requested from each address to see if it works; must be reachable over IPv6
+#IPV6_CHECK_URL="$API_URL"

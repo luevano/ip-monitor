@@ -160,9 +160,9 @@ cython_debug/
 #.idea/
 
 # Project specific
-config.sh
-ip-monitor.service
-ip-monitor.timer
+/config.sh
+/ip-monitor.service
+/ip-monitor.timer
 *.log
 config.py
 ip-monitor-api.service
