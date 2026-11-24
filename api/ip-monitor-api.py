@@ -66,7 +66,7 @@ async def update_ips(credentials: Credentials, request: Request):
                             status_code=status_code)
 
     if sname not in servers:
-        servers[sname] = {"ip": ip, "secret": ssecret}
+        servers[sname] = {"ip": ip, "secret": ssecret, "ip_history": [ip]}
         save_servers_info()
         status_code = status.HTTP_201_CREATED
         out = {"name": sname, "secret": ssecret, "ip": ip, "status_code": status_code}
@@ -83,7 +83,7 @@ async def update_ips(credentials: Credentials, request: Request):
     if servers[sname]["ip"] != ip:
         old_ip = servers[sname]["ip"]
         servers[sname]["ip"] = ip
-        servers[sname]["ip_history"].insert(0, ip)
+        servers[sname].setdefault("ip_history", []).insert(0, ip)
         save_servers_info()
 
         status_code = status.HTTP_201_CREATED
