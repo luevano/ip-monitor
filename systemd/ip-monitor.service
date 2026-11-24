@@ -10,9 +10,9 @@ Group=ip-monitor
 ExecStart=/usr/bin/ip-monitor
 TimeoutStartSec=300
 
-# The config holds API keys and is kept encrypted (see ip-monitor-config);
-# systemd decrypts it and hands the service a private copy.
-LoadCredentialEncrypted=config.sh:/etc/ip-monitor/config.sh.cred
+# The config holds API keys and stays readable by root only; systemd hands
+# the service a private copy.
+LoadCredential=config.sh:/etc/ip-monitor/config.sh
 StateDirectory=ip-monitor
 StateDirectoryMode=0700
 
@@ -43,4 +43,6 @@ RemoveIPC=yes
 SystemCallArchitectures=native
 SystemCallFilter=@system-service
 SystemCallFilter=~@privileged @resources
+# setpriv needs it to take the network capability away from the helpers
+SystemCallFilter=capset
 SystemCallErrorNumber=EPERM

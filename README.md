@@ -27,13 +27,12 @@ The files are laid out for a package:
 | File | Installed as |
 |---|---|
 | `ip-monitor.sh` | `/usr/bin/ip-monitor` |
-| `ip-monitor-config` | `/usr/bin/ip-monitor-config` |
 | `api/ip-monitor-admin` | `/usr/bin/ip-monitor-admin` |
 | `api/ip_monitor_api.py`, `api/store.py` | `/usr/lib/ip-monitor/` |
 | `api/api.conf` | `/etc/ip-monitor/api.conf` |
 | `systemd/*.service`, `systemd/*.timer` | `/usr/lib/systemd/system/` |
 | `systemd/ip-monitor.sysusers` | `/usr/lib/sysusers.d/ip-monitor.conf` |
-| `config.sh.sample` | `/usr/share/doc/ip-monitor/config.sh.sample` |
+| `config.sh.sample` | `/etc/ip-monitor/config.sh` (mode `600`) |
 
 Both services run as the `ip-monitor` system user, sandboxed.
 
@@ -66,13 +65,7 @@ A registry in the first format (`{"name": {"ip", "secret"}}`, secrets in plain t
 
 ## Client
 
-The config holds the API token, the Vultr API key and the Discord webhook, so it's kept encrypted with the machine's key (`systemd-creds`) in `/etc/ip-monitor/config.sh.cred`:
-
-```bash
-ip-monitor-config edit         # starts from the sample the first time
-ip-monitor-config import FILE  # encrypt an existing plain config
-ip-monitor-config show
-```
+The config is `/etc/ip-monitor/config.sh`. It holds the API token, the Vultr API key and the Discord webhook, so it's owned by root with mode `600`; systemd hands the sandboxed service a private copy.
 
 Test it without changing anything (no DNS update, no address removal, no Discord post, and the API is only asked):
 

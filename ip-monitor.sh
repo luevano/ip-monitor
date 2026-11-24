@@ -8,10 +8,9 @@
 #              post, no state written, and the API is only read (GET).
 #
 # Config (first one that applies):
-#   $IP_MONITOR_CONFIG               a plain file, for development
-#   $CREDENTIALS_DIRECTORY/config.sh decrypted and handed over by systemd
-#   /etc/ip-monitor/config.sh.cred   encrypted, for a manual run as root
-#                                    (it's managed with ip-monitor-config)
+#   $IP_MONITOR_CONFIG                for development
+#   $CREDENTIALS_DIRECTORY/config.sh  the copy systemd hands to the service
+#   /etc/ip-monitor/config.sh         readable by root only, for a manual run
 # State: $IP_MONITOR_STATE, $STATE_DIRECTORY or /var/lib/ip-monitor
 
 set -uo pipefail
@@ -23,35 +22,15 @@ case "${1:-}" in
 	*) echo "Usage: ${0##*/} [--dry-run]" >&2; exit 2 ;;
 esac
 
-CONFIG_CRED="/etc/ip-monitor/config.sh.cred"
+CONFIG="${IP_MONITOR_CONFIG:-${CREDENTIALS_DIRECTORY:-/etc/ip-monitor}/config.sh}"
 STATE_DIR="${IP_MONITOR_STATE:-${STATE_DIRECTORY:-/var/lib/ip-monitor}}"
 
-if [ -n "${IP_MONITOR_CONFIG:-}" ]; then
-	CONFIG="$IP_MONITOR_CONFIG"
-elif [ -n "${CREDENTIALS_DIRECTORY:-}" ]; then
-	CONFIG="$CREDENTIALS_DIRECTORY/config.sh"
-else
-	CONFIG=""
+if [ ! -r "$CONFIG" ]; then
+	echo "Can't read config file: $CONFIG (it's readable by root only)" >&2
+	exit 2
 fi
-
-if [ -n "$CONFIG" ]; then
-	if [ ! -r "$CONFIG" ]; then
-		echo "Can't read config file: $CONFIG" >&2
-		exit 2
-	fi
-	# shellcheck disable=SC1090
-	source "$CONFIG"
-else
-	CONFIG="$CONFIG_CRED"
-	if ! CONFIG_TEXT="$(systemd-creds decrypt --name=config.sh "$CONFIG_CRED" - 2>&1)"; then
-		echo "Can't decrypt $CONFIG_CRED: $CONFIG_TEXT" >&2
-		echo "Run as root. The config is created with: ip-monitor-config edit" >&2
-		exit 2
-	fi
-	# shellcheck disable=SC1091
-	source /dev/stdin <<< "$CONFIG_TEXT"
-	unset CONFIG_TEXT
-fi
+# shellcheck disable=SC1090
+source "$CONFIG"
 
 for var in API_URL API_SECRET DOMAIN VULTR_API_URL VULTR_API_KEY; do
 	if [ -z "${!var:-}" ]; then
@@ -91,8 +70,8 @@ C_RED=15548997
 # Only "ip addr del" needs the network capability the service runs with:
 # everything that talks to the network runs without it.
 NOCAP=(setpriv --ambient-caps=-all)
-if ! "${NOCAP[@]}" true 2> /dev/null; then
-	echo "setpriv isn't usable, running helpers without dropping capabilities."
+if ! NOCAP_ERROR="$("${NOCAP[@]}" true 2>&1)"; then
+	echo "setpriv isn't usable ($NOCAP_ERROR), running helpers without dropping capabilities."
 	NOCAP=()
 fi
 CURL=("${NOCAP[@]}" curl -sS --proto =https --connect-timeout 10 --max-time 30)

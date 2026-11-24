@@ -1,6 +1,6 @@
 #!/usr/bin/bash
-# Config for the ip-monitor client. It holds secrets, so the installed one is
-# kept encrypted: edit it with "ip-monitor-config edit".
+# Config for the ip-monitor client. It holds secrets: keep it readable by
+# root only (mode 600).
 
 # only https is accepted
 API_URL="https://api.example.com/ip-monitor/ip"
