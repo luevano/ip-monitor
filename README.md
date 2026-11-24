@@ -12,7 +12,7 @@ A record is only marked as updated once Vultr accepted it, so a failed update is
 
 ## Requirements
 
-For the monitor (client): `curl`, `jq`, `iproute2`, `gawk` and optionally [`speedtest-go`](https://github.com/showwin/speedtest-go).
+For the monitor (client): `curl`, `jq`, `iproute2`, `gawk`, `util-linux` and optionally [`speedtest-go`](https://github.com/showwin/speedtest-go).
 For the API: `uvicorn` and python's `fastapi`.
 
 Full installation in Arch linux:

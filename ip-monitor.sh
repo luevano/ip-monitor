@@ -38,6 +38,16 @@ for var in API_URL API_SECRET DOMAIN VULTR_API_URL VULTR_API_KEY; do
 	fi
 done
 
+# Without the state every run would look like a change (DNS update, Discord
+# post), so don't start without it.
+if [ "$DRY_RUN" -eq 0 ]; then
+	mkdir -p "$STATE_DIR" 2> /dev/null
+	if [ ! -w "$STATE_DIR" ]; then
+		echo "Can't write to state directory: $STATE_DIR" >&2
+		exit 2
+	fi
+fi
+
 # optional settings
 : "${DISCORD_USERNAME:=IP Monitor}"
 : "${DISCORD_WEBHOOK:=}"
@@ -56,7 +66,14 @@ C_PURPLE=10181046
 C_ORANGE=15105570
 C_RED=15548997
 
-CURL=(curl -sS --connect-timeout 10 --max-time 30)
+# Only "ip addr del" needs the network capability the service runs with:
+# everything that talks to the network runs without it.
+NOCAP=(setpriv --ambient-caps=-all)
+if ! "${NOCAP[@]}" true 2> /dev/null; then
+	echo "setpriv isn't usable, running helpers without dropping capabilities."
+	NOCAP=()
+fi
+CURL=("${NOCAP[@]}" curl -sS --proto =https --connect-timeout 10 --max-time 30)
 
 # results, filled in by ipv4_run and ipv6_run
 IPV4_CURRENT=""
@@ -168,6 +185,24 @@ ipv4_run ()
 	return 0
 }
 
+# $1 = IPv6 address; prints its /64 prefix as four zero-padded groups
+ipv6_prefix64 ()
+{
+	local i fill
+	local -a head=() tail=() all=()
+	if [[ "$1" == *::* ]]; then
+		IFS=: read -ra head <<< "${1%%::*}"
+		IFS=: read -ra tail <<< "${1##*::}"
+		fill=$((8 - ${#head[@]} - ${#tail[@]}))
+		all=("${head[@]}")
+		for ((i = 0; i < fill; i++)); do all+=(0); done
+		all+=("${tail[@]}")
+	else
+		IFS=: read -ra all <<< "$1"
+	fi
+	printf '%04x:%04x:%04x:%04x\n' "0x${all[0]}" "0x${all[1]}" "0x${all[2]}" "0x${all[3]}"
+}
+
 # $1 = local IPv6 address; true if a request sent from it gets an answer
 ipv6_works ()
 {
@@ -178,7 +213,7 @@ ipv6_works ()
 ipv6_run ()
 {
 	local iface addr plen dynamic last entry
-	local good=() bad=()
+	local good=() bad=() good_prefixes=" "
 
 	[ "$IPV6_ENABLED" = "1" ] || return 0
 
@@ -212,12 +247,19 @@ ipv6_run ()
 		return 0
 	fi
 
-	# With a working address present, the ones that don't work are leftovers
-	# from an old prefix. Only addresses the network handed out are removed.
+	for addr in "${good[@]}"; do
+		good_prefixes+="$(ipv6_prefix64 "$addr") "
+	done
+
+	# An address is stale when it doesn't work and its prefix isn't the
+	# prefix of any working address: a leftover from an old ISP prefix.
+	# Only addresses the network handed out are removed.
 	for entry in "${bad[@]}"; do
 		addr="${entry% *}"
 		dynamic="${entry#* }"
-		if [ "$dynamic" != "true" ] || [ "$IPV6_REMOVE_STALE" != "1" ]; then
+		if [[ "$good_prefixes" == *" $(ipv6_prefix64 "${addr%/*}") "* ]]; then
+			log "IPv6: $addr didn't answer but its prefix works, keeping it."
+		elif [ "$dynamic" != "true" ] || [ "$IPV6_REMOVE_STALE" != "1" ]; then
 			log "IPv6: $addr doesn't work, not removing it."
 		elif [ "$DRY_RUN" -eq 1 ]; then
 			log "IPv6: [dry-run] would remove stale address $addr."
@@ -288,7 +330,7 @@ speedtest ()
 	[ "$DRY_RUN" -eq 1 ] && return 1
 
 	log "Performing Speedtest on server ID $SPEEDTEST_SERVER_ID."
-	out="$(timeout 120 speedtest-go --server "$SPEEDTEST_SERVER_ID" --json)" || return 1
+	out="$(timeout 120 "${NOCAP[@]}" speedtest-go --server "$SPEEDTEST_SERVER_ID" --json)" || return 1
 	# speedtest-go reports bytes per second
 	SPEEDTEST_DL="$(jq -r '.servers[0].dl_speed // empty' <<< "$out" 2>/dev/null \
 		| awk '{printf "%.2f", $1 / 125000}')"
@@ -299,11 +341,16 @@ speedtest ()
 
 notify ()
 {
-	local now color fields removed
+	local now color fields removed errors=""
 	now="$(date -Iseconds)"
 
-	if [ ${#ERRORS[@]} -gt 0 ]; then
-		discord_webhook "$(jq -n --arg title "$DOMAIN" --arg ts "$now" \
+	# an error that repeats on every run is only posted once
+	[ ${#ERRORS[@]} -gt 0 ] && errors="$(printf '%s\n' "${ERRORS[@]}")"
+	if [ "$errors" = "$(state_get last_error)" ]; then
+		[ -n "$errors" ] && log "Same error as the last run, not posting it again."
+	else
+		state_set last_error "$errors"
+		[ -n "$errors" ] && discord_webhook "$(jq -n --arg title "$DOMAIN" --arg ts "$now" \
 			--argjson color "$C_RED" '{color: $color, title: $title,
 			description: ($ARGS.positional | join("\n")), timestamp: $ts} | [.]' \
 			--args "${ERRORS[@]}")"
