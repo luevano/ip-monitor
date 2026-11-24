@@ -164,7 +164,7 @@ cython_debug/
 /ip-monitor.service
 /ip-monitor.timer
 *.log
-config.py
-ip-monitor-api.service
+/api/config.py
+/api/ip-monitor-api.service
 log.ini
-servers.json
+/api/servers.json

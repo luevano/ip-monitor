@@ -1,0 +1,123 @@
+#!/usr/bin/python3
+"""Manage the servers the ip-monitor API accepts updates from.
+
+Run it as root (or as the ip-monitor user) on the machine that runs the API.
+"""
+
+import argparse
+import sys
+
+sys.path.insert(0, "/usr/lib/ip-monitor")
+sys.path.insert(0, __file__.rsplit("/", 1)[0])
+
+import store  # noqa: E402
+
+
+def read_token(from_stdin: bool) -> tuple[str, bool]:
+    """Returns the token and whether it was generated here."""
+    if not from_stdin:
+        return store.new_token(), True
+    token = sys.stdin.readline().strip()
+    if not token:
+        sys.exit("No token on stdin.")
+    return token, False
+
+
+def show_token(name: str, token: str, generated: bool):
+    if generated:
+        print(f"Token for {name} (shown only this once, it isn't stored):")
+        print(token)
+    else:
+        print(f"Token for {name} set.")
+
+
+def cmd_add(args):
+    with store.locked() as servers:
+        if args.name in servers:
+            sys.exit(f"{args.name} already exists, use 'rotate' for a new token.")
+        token, generated = read_token(args.token_stdin)
+        servers[args.name] = {
+            "token_hash": store.hash_token(token),
+            "ipv4": None,
+            "ipv6": None,
+            "ipv4_history": [],
+            "ipv6_history": [],
+            "updated": None,
+        }
+    show_token(args.name, token, generated)
+
+
+def cmd_rotate(args):
+    with store.locked() as servers:
+        if args.name not in servers:
+            sys.exit(f"{args.name} doesn't exist.")
+        token, generated = read_token(args.token_stdin)
+        servers[args.name]["token_hash"] = store.hash_token(token)
+    show_token(args.name, token, generated)
+
+
+def cmd_remove(args):
+    with store.locked() as servers:
+        if args.name not in servers:
+            sys.exit(f"{args.name} doesn't exist.")
+        del servers[args.name]
+    print(f"{args.name} removed.")
+
+
+def cmd_list(args):
+    with store.locked() as servers:
+        for name, server in sorted(servers.items()):
+            print(f"{name}\tIPv4: {server.get('ipv4') or '-'}\tIPv6: {server.get('ipv6') or '-'}"
+                  f"\tupdated: {server.get('updated') or '-'}")
+
+
+def cmd_show(args):
+    with store.locked() as servers:
+        if args.name not in servers:
+            sys.exit(f"{args.name} doesn't exist.")
+        server = servers[args.name]
+    print(f"{args.name} (updated: {server.get('updated') or '-'})")
+    for version in (4, 6):
+        print(f"IPv{version}: {server.get(f'ipv{version}') or '-'}")
+        for ip in server.get(f"ipv{version}_history", []):
+            print(f"  {ip}")
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    parser.add_argument("--store", help=f"registry file (default: {store.DEFAULT_PATH})")
+    commands = parser.add_subparsers(dest="command", required=True)
+
+    stdin_help = "read the token from stdin instead of generating one"
+    add = commands.add_parser("add", help="register a server and print its new token")
+    add.add_argument("name")
+    add.add_argument("--token-stdin", action="store_true", help=stdin_help)
+    add.set_defaults(func=cmd_add)
+
+    rotate = commands.add_parser("rotate", help="give a server a new token")
+    rotate.add_argument("name")
+    rotate.add_argument("--token-stdin", action="store_true", help=stdin_help)
+    rotate.set_defaults(func=cmd_rotate)
+
+    remove = commands.add_parser("remove", help="remove a server")
+    remove.add_argument("name")
+    remove.set_defaults(func=cmd_remove)
+
+    commands.add_parser("list", help="list the servers").set_defaults(func=cmd_list)
+
+    show = commands.add_parser("show", help="show a server's addresses and history")
+    show.add_argument("name")
+    show.set_defaults(func=cmd_show)
+
+    args = parser.parse_args()
+    if args.store:
+        import os
+        os.environ["IP_MONITOR_SERVERS"] = args.store
+    try:
+        args.func(args)
+    except PermissionError as error:
+        sys.exit(f"{error}\nRun it as root or as the ip-monitor user.")
+
+
+if __name__ == "__main__":
+    main()

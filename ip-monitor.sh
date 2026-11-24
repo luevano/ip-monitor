@@ -7,10 +7,12 @@
 #   --dry-run  only report: no DNS update, no address removal, no Discord
 #              post, no state written, and the API is only read (GET).
 #
-# Paths (first one set wins):
-#   config: $IP_MONITOR_CONFIG, $CREDENTIALS_DIRECTORY/config.sh,
-#           /etc/ip-monitor/config.sh
-#   state:  $IP_MONITOR_STATE, $STATE_DIRECTORY, /var/lib/ip-monitor
+# Config (first one that applies):
+#   $IP_MONITOR_CONFIG               a plain file, for development
+#   $CREDENTIALS_DIRECTORY/config.sh decrypted and handed over by systemd
+#   /etc/ip-monitor/config.sh.cred   encrypted, for a manual run as root
+#                                    (it's managed with ip-monitor-config)
+# State: $IP_MONITOR_STATE, $STATE_DIRECTORY or /var/lib/ip-monitor
 
 set -uo pipefail
 
@@ -21,15 +23,35 @@ case "${1:-}" in
 	*) echo "Usage: ${0##*/} [--dry-run]" >&2; exit 2 ;;
 esac
 
-CONFIG="${IP_MONITOR_CONFIG:-${CREDENTIALS_DIRECTORY:-/etc/ip-monitor}/config.sh}"
+CONFIG_CRED="/etc/ip-monitor/config.sh.cred"
 STATE_DIR="${IP_MONITOR_STATE:-${STATE_DIRECTORY:-/var/lib/ip-monitor}}"
 
-if [ ! -r "$CONFIG" ]; then
-	echo "Can't read config file: $CONFIG" >&2
-	exit 2
+if [ -n "${IP_MONITOR_CONFIG:-}" ]; then
+	CONFIG="$IP_MONITOR_CONFIG"
+elif [ -n "${CREDENTIALS_DIRECTORY:-}" ]; then
+	CONFIG="$CREDENTIALS_DIRECTORY/config.sh"
+else
+	CONFIG=""
 fi
-# shellcheck disable=SC1090
-source "$CONFIG"
+
+if [ -n "$CONFIG" ]; then
+	if [ ! -r "$CONFIG" ]; then
+		echo "Can't read config file: $CONFIG" >&2
+		exit 2
+	fi
+	# shellcheck disable=SC1090
+	source "$CONFIG"
+else
+	CONFIG="$CONFIG_CRED"
+	if ! CONFIG_TEXT="$(systemd-creds decrypt --name=config.sh "$CONFIG_CRED" - 2>&1)"; then
+		echo "Can't decrypt $CONFIG_CRED: $CONFIG_TEXT" >&2
+		echo "Run as root. The config is created with: ip-monitor-config edit" >&2
+		exit 2
+	fi
+	# shellcheck disable=SC1091
+	source /dev/stdin <<< "$CONFIG_TEXT"
+	unset CONFIG_TEXT
+fi
 
 for var in API_URL API_SECRET DOMAIN VULTR_API_URL VULTR_API_KEY; do
 	if [ -z "${!var:-}" ]; then
@@ -158,29 +180,44 @@ sync_record ()
 	return 1
 }
 
-ipv4_run ()
+# Report to the API and learn the public address it sees, the same way for
+# both families. $1 = 4 or 6, $2 = local address to send from (optional).
+# Sets API_IP. On a dry run the API is only asked (GET), nothing is recorded.
+api_report ()
 {
-	local resp code ip
+	local resp code ip pattern opts=("-$1")
+	[ -n "${2:-}" ] && opts+=(--interface "$2")
+	API_IP=""
+
 	if [ "$DRY_RUN" -eq 1 ]; then
-		resp="$("${CURL[@]}" -4 "$API_URL")"
+		resp="$("${CURL[@]}" "${opts[@]}" "$API_URL")"
 	else
-		resp="$(jq -n --arg name "$DOMAIN" --arg secret "$API_SECRET" \
-			'{name: $name, secret: $secret}' \
-			| "${CURL[@]}" -4 -X PUT "$API_URL" -H "Content-Type: application/json" -d @-)"
+		resp="$(jq -n --arg name "$DOMAIN" '{name: $name}' \
+			| "${CURL[@]}" "${opts[@]}" -X PUT "$API_URL" \
+				-H @<(printf 'Authorization: Bearer %s\n' "$API_SECRET") \
+				-H "Content-Type: application/json" -d @-)"
 	fi
 	code="$(jq -r '.status_code // empty' <<< "$resp" 2>/dev/null)"
 	ip="$(jq -r '.ip // empty' <<< "$resp" 2>/dev/null)"
 
-	# the response isn't logged as a whole: it can contain the secret
-	if [[ ! "$code" =~ ^20[01]$ || ! "$ip" =~ ^[0-9]+(\.[0-9]+){3}$ ]]; then
-		log "IPv4: unexpected API response (status_code '${code:-none}')."
-		ERRORS+=("Unexpected IP Monitor API response (status_code '${code:-none}').")
+	pattern='^[0-9]+(\.[0-9]+){3}$'
+	[ "$1" = "6" ] && pattern='^[0-9a-fA-F]*:[0-9a-fA-F:]+$'
+	if [[ ! "$code" =~ ^20[01]$ || ! "$ip" =~ $pattern ]]; then
+		# only the API's own message is logged, never the whole response
+		resp="$(jq -r '.error // .msg // empty' <<< "$resp" 2>/dev/null)"
+		log "IPv$1: the API didn't accept the report (status_code '${code:-none}'${resp:+, $resp})."
+		ERRORS+=("IPv$1: IP Monitor API error (status_code '${code:-none}'${resp:+, $resp}).")
 		return 1
 	fi
+	API_IP="$ip"
+}
 
-	IPV4_CURRENT="$ip"
-	log "IPv4: public address is $ip."
-	sync_record ipv4 "$VULTR_API_URL" "$ip" "A"
+ipv4_run ()
+{
+	api_report 4 || return 1
+	IPV4_CURRENT="$API_IP"
+	log "IPv4: public address is $IPV4_CURRENT."
+	sync_record ipv4 "$VULTR_API_URL" "$IPV4_CURRENT" "A"
 	[ $? -eq 10 ] && IPV4_CHANGED=1
 	return 0
 }
@@ -212,7 +249,7 @@ ipv6_works ()
 
 ipv6_run ()
 {
-	local iface addr plen dynamic last entry
+	local iface addr plen dynamic last entry pick
 	local good=() bad=() good_prefixes=" "
 
 	[ "$IPV6_ENABLED" = "1" ] || return 0
@@ -274,10 +311,15 @@ ipv6_run ()
 
 	# keep the published address for as long as it works
 	last="$(state_get ipv6)"
-	IPV6_CURRENT="${good[0]}"
+	pick="${good[0]}"
 	for addr in "${good[@]}"; do
-		[ "$addr" = "$last" ] && IPV6_CURRENT="$addr"
+		[ "$addr" = "$last" ] && pick="$addr"
 	done
+
+	# from here on it's the same as IPv4: report from that address, publish
+	# what the API saw
+	api_report 6 "$pick" || return 1
+	IPV6_CURRENT="$API_IP"
 	log "IPv6: public address is $IPV6_CURRENT (${#good[@]} working on $iface)."
 
 	if [ -z "$VULTR_RECORD_ID_AAAA" ] || [ -z "$VULTR_API_URL_AAAA" ]; then
@@ -356,10 +398,17 @@ notify ()
 			--args "${ERRORS[@]}")"
 	fi
 
-	if [ "$IPV4_CHANGED" -eq 1 ]; then
-		fields="$(jq -n --arg v4 "$IPV4_CURRENT" --arg v6 "${IPV6_CURRENT:-none}" '[
+	# one post for any change, the same for both families
+	if [ "$IPV4_CHANGED" -eq 1 ] || [ "$IPV6_CHANGED" -eq 1 ] || [ ${#IPV6_REMOVED[@]} -gt 0 ]; then
+		fields="$(jq -n --arg v4 "${IPV4_CURRENT:-unknown}" --arg v6 "${IPV6_CURRENT:-none}" '[
 			{name: "IPv4", value: $v4, inline: true},
 			{name: "IPv6", value: $v6, inline: true}]')"
+		if [ ${#IPV6_REMOVED[@]} -gt 0 ]; then
+			removed="$(printf '%s\n' "${IPV6_REMOVED[@]}")"
+			fields="$(jq --arg removed "$removed" '. + [
+				{name: "Stale IPv6 addresses removed", value: $removed, inline: false}]' \
+				<<< "$fields")"
+		fi
 		color="$C_BLUE"
 		if speedtest; then
 			color="$(get_embed_color "$SPEEDTEST_DL")"
@@ -375,18 +424,6 @@ notify ()
 			--argjson color "$color" --argjson fields "$fields" \
 			'[{color: $color, title: $title, description: "IP changed.",
 			fields: $fields, timestamp: $ts}]')"
-	elif [ "$IPV6_CHANGED" -eq 1 ] || [ ${#IPV6_REMOVED[@]} -gt 0 ]; then
-		removed="none"
-		[ ${#IPV6_REMOVED[@]} -gt 0 ] && removed="$(printf '%s\n' "${IPV6_REMOVED[@]}")"
-		log "Posting the IPv6 change to Discord."
-		discord_webhook "$(jq -n --arg title "$DOMAIN" --arg ts "$now" \
-			--argjson color "$C_PURPLE" --arg v6 "${IPV6_CURRENT:-none}" \
-			--arg removed "$removed" \
-			'[{color: $color, title: $title, description: "IPv6 changed.",
-			fields: [
-				{name: "IPv6", value: $v6, inline: false},
-				{name: "Stale addresses removed", value: $removed, inline: false}],
-			timestamp: $ts}]')"
 	fi
 }
 

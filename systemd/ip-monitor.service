@@ -10,9 +10,9 @@ Group=ip-monitor
 ExecStart=/usr/bin/ip-monitor
 TimeoutStartSec=300
 
-# The config holds API keys and stays readable by root only; systemd hands
-# the service a private copy.
-LoadCredential=config.sh:/etc/ip-monitor/config.sh
+# The config holds API keys and is kept encrypted (see ip-monitor-config);
+# systemd decrypts it and hands the service a private copy.
+LoadCredentialEncrypted=config.sh:/etc/ip-monitor/config.sh.cred
 StateDirectory=ip-monitor
 StateDirectoryMode=0700
 

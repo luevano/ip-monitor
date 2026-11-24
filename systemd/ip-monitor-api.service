@@ -1,0 +1,54 @@
+[Unit]
+Description=IP Monitor API
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+User=ip-monitor
+Group=ip-monitor
+EnvironmentFile=/etc/ip-monitor/api.conf
+Environment=IP_MONITOR_SERVERS=%S/ip-monitor-api/servers.json
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/usr/bin/uvicorn ip_monitor_api:app --app-dir /usr/lib/ip-monitor \
+    --host ${IP_MONITOR_API_HOST} --port ${IP_MONITOR_API_PORT} \
+    --proxy-headers --forwarded-allow-ips ${IP_MONITOR_API_FORWARDED_ALLOW_IPS} \
+    --no-server-header
+Restart=on-failure
+RestartSec=5s
+
+# the server registry (token hashes and seen addresses)
+StateDirectory=ip-monitor-api
+StateDirectoryMode=0700
+
+# no privileges at all
+AmbientCapabilities=
+CapabilityBoundingSet=
+NoNewPrivileges=yes
+PrivateUsers=yes
+UMask=0077
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectProc=invisible
+ProcSubset=pid
+ProtectClock=yes
+ProtectHostname=yes
+ProtectKernelLogs=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RemoveIPC=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+SystemCallErrorNumber=EPERM
+
+[Install]
+WantedBy=multi-user.target
